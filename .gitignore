@@ -1,3 +1,11 @@
 node_modules/
 .env
 .env.enc
+
+# Java / Spring Boot
+server/target/
+
+# Python / FastAPI
+ai/__pycache__/
+ai/.venv/
+*.pyc

@@ -1,0 +1,55 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: cometbot
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile.ai
+    environment:
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.titan-text-express-v1}
+      AI_PORT: "8000"
+    ports:
+      - "8000:8000"
+    # Bedrock is called via the EC2 instance role in production.
+    # For local testing, either set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+    # in the environment or leave empty to fall back to default credential chain.
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.server
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: cometbot
+      DB_USER: root
+      DB_PASSWORD: root
+      AI_URL: http://ai:8000
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-}
+      DISCORD_OWNER_ID: ${DISCORD_OWNER_ID:-}
+      REMINDER_TZ: America/Chicago
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      ai:
+        condition: service_started
+
+volumes:
+  mysql-data:
