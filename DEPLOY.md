@@ -18,16 +18,16 @@ Target: **1 EC2** running the Spring Boot app + FastAPI service, **1 RDS MySQL**
 
 ## 2. Bedrock
 
-- In the Bedrock console for your region, make sure Anthropic's **Claude Opus 5** is available to your account
-  (first-time Anthropic model use may require submitting the use-case form).
-- The AI service calls Claude through Bedrock's Messages API endpoint using the
-  `anthropic.claude-opus-5` model ID. Override with `BEDROCK_MODEL_ID` if you want a different Claude model.
+- In the Bedrock console for `us-east-2`, open **Model access** and confirm **Titan Text G1 - Express**
+  (`amazon.titan-text-express-v1`) is enabled, and check Bedrock's model lifecycle page that it isn't
+  marked legacy/end-of-life in your region.
+- Titan reads about 8K tokens, so syllabi over 20,000 characters are rejected with a clear error
+  (`MAX_SYLLABUS_CHARS` / `app.syllabus.max-chars`).
 
 ## 3. EC2
 
-- Launch an Ubuntu 24.04 instance (t3.small+), attach an **IAM instance role** that can invoke Claude on Bedrock
-  (e.g. `AmazonBedrockFullAccess`). If calls fail with 403, check the role against AWS's current docs for the
-  Bedrock Messages API.
+- Launch an Ubuntu 24.04 instance (t3.small+), attach an **IAM instance role** allowed to call
+  `bedrock:InvokeModel` on the Titan model (e.g. `AmazonBedrockFullAccess`).
 - Security group: allow **22** (SSH) and **8080** (API) from your IP. **8000 stays private.**
 
 ## 4. Install on EC2
@@ -59,7 +59,7 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/cometbot/ai
 Environment=AWS_REGION=us-east-2
-Environment=BEDROCK_MODEL_ID=anthropic.claude-opus-5
+Environment=BEDROCK_MODEL_ID=amazon.titan-text-express-v1
 ExecStart=/opt/cometbot/ai/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 

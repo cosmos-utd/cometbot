@@ -20,7 +20,7 @@ services:
       dockerfile: Dockerfile.ai
     environment:
       AWS_REGION: ${AWS_REGION:-us-east-2}
-      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-opus-5}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.titan-text-express-v1}
       # Bedrock credentials for local runs (in production the EC2 instance role is used instead).
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}

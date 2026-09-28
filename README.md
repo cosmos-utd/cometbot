@@ -1,19 +1,19 @@
 # CometBot
 
-A Discord bot for UT Dallas courses. A moderator uploads the course syllabus, Claude (on Amazon Bedrock) pulls
+A Discord bot for UT Dallas courses. A moderator uploads the course syllabus, Amazon Titan (on Bedrock) pulls
 out every dated assignment, quiz, and exam, and the bot posts reminders before each one is due.
 
 ## How it works
 
 ```
-Discord ──► server/ (Spring Boot + JDA) ──► ai/ (FastAPI) ──► Claude on Bedrock
+Discord ──► server/ (Spring Boot + JDA) ──► ai/ (FastAPI) ──► Titan on Bedrock
                  │
                  └──► MySQL (H2 locally)
 ```
 
 - **`server/`**: the Discord bot, a REST API, the database, and a scheduler that sends reminders.
 - **`ai/`**: one endpoint, `POST /extract`, that turns syllabus text into `{title, type, date}` items using
-  Claude with structured output.
+  Amazon Titan Text Express. Syllabi are limited to 20,000 characters (Titan's context size).
 
 Reminders go to the channel set with `!setchannel` (or the server's system channel): one once a deadline is within
 3 days, and one on the due date. If the bot was offline, the advance reminder goes out on the next run instead of
@@ -47,7 +47,7 @@ All endpoints are under `/api/guilds/{guildId}` and require an `X-API-Key` heade
 | `POST` | `/deadlines` | `{"title", "dueDate": "YYYY-MM-DD", "type"}` |
 | `PUT` | `/deadlines/{id}` | any of `title`, `dueDate`, `type` |
 | `DELETE` | `/deadlines/{id}` | |
-| `POST` | `/syllabus` | `{"content": "..."}` |
+| `POST` | `/syllabus` | `{"content": "..."}` (max 20,000 characters) |
 | `POST` | `/syllabus/file` | multipart `file` (PDF or .txt, max 10 MB) |
 | `GET` | `/syllabus` | |
 | `POST` | `/scan` | |
@@ -64,7 +64,8 @@ All endpoints are under `/api/guilds/{guildId}` and require an `X-API-Key` heade
 | `REMINDER_TZ` | server | `America/Chicago` | Defines "today" for reminders and extraction |
 | `SPRING_PROFILES_ACTIVE` | server | `local` | `prod` uses MySQL (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL_MODE`) |
 | `AWS_REGION` | ai | `us-east-2` | |
-| `BEDROCK_MODEL_ID` | ai | `anthropic.claude-opus-5` | |
+| `BEDROCK_MODEL_ID` | ai | `amazon.titan-text-express-v1` | |
+| `MAX_SYLLABUS_CHARS` | ai | `20000` | Keep in step with `app.syllabus.max-chars` on the server |
 
 ## Development
 

@@ -1,32 +1,27 @@
+import json
 import os
 import re
 from datetime import date
 from functools import lru_cache
-from typing import Literal
 
-import anthropic
-from anthropic import AnthropicBedrockMantle
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 app = FastAPI(title="CometBot AI")
 
-MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "anthropic.claude-opus-5")
+MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "amazon.titan-text-express-v1")
 REGION = os.environ.get("AWS_REGION", "us-east-2")
-MAX_SYLLABUS_CHARS = int(os.environ.get("MAX_SYLLABUS_CHARS", 300_000))
+# Titan Text Express reads ~8K tokens; longer syllabi are rejected instead of silently truncated.
+MAX_SYLLABUS_CHARS = int(os.environ.get("MAX_SYLLABUS_CHARS", 20_000))
 
-DeadlineType = Literal["assignment", "quiz", "test", "exam", "final", "other"]
+VALID_TYPES = {"assignment", "quiz", "test", "exam", "final", "other"}
 
-SYSTEM_PROMPT = """You extract graded deadlines from a university course syllabus for a student reminder bot.
+PROMPT = """You are a syllabus deadline parser. Today's date is {today}. From the syllabus text below, extract every assignment, quiz, test, exam, and final that has a concrete due date. If a date has no year, use the year that places it in the term the syllabus describes (or the current/upcoming term relative to today). Return ONLY a JSON array with no other text. Each element must be exactly: {{"title": "...", "type": "assignment|quiz|test|exam|final|other", "date": "YYYY-MM-DD"}}. If a due date is missing or unclear, skip it. If nothing is found, return [].
 
-Include every assignment, homework, project, lab, quiz, test, exam, and final that has a concrete due date. Leave out items without a specific date (e.g. "TBA", "week 5"), office hours, holidays, and lecture topics.
-
-For each item give:
-- title: short, as the syllabus names it (e.g. "Homework 3", "Midterm 1")
-- type: assignment, quiz, test, exam, final, or other
-- date: the due date as YYYY-MM-DD
-
-Syllabi often omit the year. Resolve it from the term named in the syllabus; if the term isn't stated, pick the year that puts the date in the current or upcoming academic term relative to today's date. If an item appears more than once, list it once."""
+SYLLABUS:
+{syllabus}"""
 
 
 class ExtractRequest(BaseModel):
@@ -47,12 +42,8 @@ class ExtractResponse(BaseModel):
 
 class ModelDeadline(BaseModel):
     title: str
-    type: DeadlineType
-    date: str = Field(description="Due date as YYYY-MM-DD")
-
-
-class ModelDeadlines(BaseModel):
-    deadlines: list[ModelDeadline]
+    type: str
+    date: str
 
 
 class ExtractionError(Exception):
@@ -60,37 +51,67 @@ class ExtractionError(Exception):
 
 
 @lru_cache(maxsize=1)
-def _client() -> AnthropicBedrockMantle:
+def _client():
     # Credentials come from the default AWS chain (EC2 instance role in prod).
-    return AnthropicBedrockMantle(aws_region=REGION)
+    return boto3.client("bedrock-runtime", region_name=REGION)
 
 
 def call_model(syllabus: str, today: date) -> list[ModelDeadline]:
     try:
-        response = _client().messages.parse(
-            model=MODEL_ID,
-            max_tokens=16000,
-            system=SYSTEM_PROMPT,
-            messages=[
+        response = _client().invoke_model(
+            modelId=MODEL_ID,
+            contentType="application/json",
+            accept="application/json",
+            body=json.dumps(
                 {
-                    "role": "user",
-                    "content": f"Today's date: {today.isoformat()}\n\n<syllabus>\n{syllabus}\n</syllabus>",
+                    "inputText": PROMPT.format(today=today.isoformat(), syllabus=syllabus),
+                    "textGenerationConfig": {"maxTokenCount": 3000, "temperature": 0.0},
                 }
-            ],
-            output_format=ModelDeadlines,
+            ).encode("utf-8"),
         )
-    except anthropic.APIStatusError as exc:
-        raise ExtractionError(f"model returned HTTP {exc.status_code}") from exc
-    except anthropic.APIConnectionError as exc:
-        raise ExtractionError("could not reach the model") from exc
+        payload = json.loads(response["body"].read().decode("utf-8"))
+    except ClientError as exc:
+        code = exc.response.get("Error", {}).get("Code", "error")
+        raise ExtractionError(f"Bedrock returned {code}") from exc
+    except (BotoCoreError, ValueError) as exc:
+        raise ExtractionError("could not reach Bedrock") from exc
 
-    if response.stop_reason == "refusal":
-        raise ExtractionError("the model declined to process this syllabus")
-    if response.stop_reason == "max_tokens":
+    result = (payload.get("results") or [{}])[0]
+    if result.get("completionReason") == "LENGTH":
         raise ExtractionError("the syllabus has too many deadlines to extract in one pass")
-    if response.parsed_output is None:
-        raise ExtractionError("the model returned no structured output")
-    return response.parsed_output.deadlines
+    return parse_output(result.get("outputText", ""))
+
+
+def parse_output(text: str) -> list[ModelDeadline]:
+    """Titan has no JSON mode: pull the first JSON array out of its reply."""
+    clean = text.strip()
+    clean = re.sub(r"^```(?:json)?\s*", "", clean)
+    clean = re.sub(r"\s*```$", "", clean)
+    try:
+        data = json.loads(clean)
+    except json.JSONDecodeError:
+        match = re.search(r"\[.*\]", clean, re.DOTALL)
+        if not match:
+            raise ExtractionError("the model's reply wasn't a JSON list of deadlines")
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError as exc:
+            raise ExtractionError("the model's reply wasn't a JSON list of deadlines") from exc
+
+    if not isinstance(data, list):
+        raise ExtractionError("the model's reply wasn't a JSON list of deadlines")
+
+    deadlines = []
+    for entry in data:
+        if isinstance(entry, dict):
+            deadlines.append(
+                ModelDeadline(
+                    title=str(entry.get("title", "")),
+                    type=str(entry.get("type", "")),
+                    date=str(entry.get("date", "")).strip(),
+                )
+            )
+    return deadlines
 
 
 def normalize(deadlines: list[ModelDeadline]) -> list[ExtractItem]:
@@ -108,7 +129,8 @@ def normalize(deadlines: list[ModelDeadline]) -> list[ExtractItem]:
         if key in seen:
             continue
         seen.add(key)
-        items.append(ExtractItem(title=title, type=d.type, date=d.date))
+        kind = d.type.strip().lower()
+        items.append(ExtractItem(title=title, type=kind if kind in VALID_TYPES else "other", date=d.date))
     return items
 
 

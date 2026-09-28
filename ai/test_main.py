@@ -74,3 +74,60 @@ def test_model_failure_is_a_502(fake_model):
 
 def test_health():
     assert client.get("/health").json() == {"status": "up"}
+
+
+def test_parse_output_handles_fenced_and_chatty_replies():
+    fenced = '```json\n[{"title": "HW 1", "type": "assignment", "date": "2026-09-10"}]\n```'
+    chatty = 'Here are the deadlines:\n[{"title": "Quiz 1", "type": "quiz", "date": "2026-09-03"}]\nDone.'
+    assert main.parse_output(fenced)[0].title == "HW 1"
+    assert main.parse_output(chatty)[0].date == "2026-09-03"
+    assert main.parse_output("[]") == []
+
+
+def test_parse_output_rejects_non_json():
+    with pytest.raises(ExtractionError):
+        main.parse_output("I could not find any deadlines.")
+
+
+def test_unknown_types_become_other(fake_model):
+    fake_model([ModelDeadline(title="Project", type="project", date="2026-10-01")])
+    resp = client.post("/extract", json={"syllabus": "x"})
+    assert resp.json()["items"][0]["type"] == "other"
+
+
+def test_calls_titan_with_the_expected_request(monkeypatch):
+    import io
+    import json as _json
+
+    sent = {}
+
+    class FakeBedrock:
+        def invoke_model(self, **kwargs):
+            sent.update(kwargs)
+            body = {"results": [{"outputText": '[{"title": "HW 1", "type": "assignment", "date": "2026-09-10"}]',
+                                 "completionReason": "FINISH"}]}
+            return {"body": io.BytesIO(_json.dumps(body).encode())}
+
+    monkeypatch.setattr(main, "_client", lambda: FakeBedrock())
+
+    result = main.call_model("HW 1 due Sep 10", date(2026, 8, 20))
+
+    assert result[0].title == "HW 1"
+    assert sent["modelId"] == main.MODEL_ID
+    request = _json.loads(sent["body"])
+    assert "Today's date is 2026-08-20" in request["inputText"]
+    assert "HW 1 due Sep 10" in request["inputText"]
+
+
+def test_truncated_titan_output_is_an_error(monkeypatch):
+    import io
+    import json as _json
+
+    class FakeBedrock:
+        def invoke_model(self, **kwargs):
+            body = {"results": [{"outputText": '[{"title": "HW 1"', "completionReason": "LENGTH"}]}
+            return {"body": io.BytesIO(_json.dumps(body).encode())}
+
+    monkeypatch.setattr(main, "_client", lambda: FakeBedrock())
+    with pytest.raises(ExtractionError, match="too many deadlines"):
+        main.call_model("x", date(2026, 8, 20))

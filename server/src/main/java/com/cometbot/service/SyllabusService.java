@@ -45,7 +45,7 @@ public class SyllabusService {
                            SyllabusTextExtractor textExtractor,
                            TransactionTemplate tx,
                            Clock clock,
-                           @Value("${app.syllabus.max-chars:300000}") int maxChars) {
+                           @Value("${app.syllabus.max-chars:20000}") int maxChars) {
         this.syllabusRepository = syllabusRepository;
         this.deadlineRepository = deadlineRepository;
         this.aiService = aiService;
