@@ -2,22 +2,43 @@
 
 Target: **1 EC2** running the Spring Boot app + FastAPI service, **1 RDS MySQL**, no secrets in files.
 
+## 0. Discord
+
+- In the [Discord developer portal](https://discord.com/developers/applications), open your bot and enable the
+  **Message Content** privileged intent (commands are read from message text).
+- Invite the bot with the **Send Messages**, **Read Message History** and **View Channels** permissions.
+
 ## 1. RDS (MySQL)
 
 - Create a MySQL 8 RDS instance (Single DB, dev class is fine).
 - Database name: `cometbot`. Note the endpoint, master user, password.
 - Security group: allow **3306 only from the EC2 instance's security group** (not the internet).
+- Connections use TLS (`DB_SSL_MODE=REQUIRED`). For certificate verification, import the RDS CA bundle into a
+  Java truststore and set `DB_SSL_MODE=VERIFY_IDENTITY`.
 
-## 2. EC2
+## 2. Bedrock
 
-- Launch an Ubuntu instance (t3.small+), attach an **IAM instance role** with `AmazonBedrockFullAccess`.
+- In the Bedrock console for your region, make sure Anthropic's **Claude Opus 5** is available to your account
+  (first-time Anthropic model use may require submitting the use-case form).
+- The AI service calls Claude through Bedrock's Messages API endpoint using the
+  `anthropic.claude-opus-5` model ID. Override with `BEDROCK_MODEL_ID` if you want a different Claude model.
+
+## 3. EC2
+
+- Launch an Ubuntu 24.04 instance (t3.small+), attach an **IAM instance role** that can invoke Claude on Bedrock
+  (e.g. `AmazonBedrockFullAccess`). If calls fail with 403, check the role against AWS's current docs for the
+  Bedrock Messages API.
 - Security group: allow **22** (SSH) and **8080** (API) from your IP. **8000 stays private.**
 
-## 3. Install on EC2
+## 4. Install on EC2
 
 ```bash
-# Java 21+
-sudo apt update && sudo apt install -y openjdk-21-jre-headless python3-venv
+# Java 25 (Eclipse Temurin), Maven, Python venv
+sudo apt update && sudo apt install -y wget apt-transport-https gpg maven python3-venv
+wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/adoptium.gpg
+echo "deb https://packages.adoptium.net/artifactory/deb $(. /etc/os-release && echo $VERSION_CODENAME) main" | sudo tee /etc/apt/sources.list.d/adoptium.list
+sudo apt update && sudo apt install -y temurin-25-jdk
+java -version   # must report 25
 ```
 
 ### FastAPI service
@@ -38,8 +59,9 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/cometbot/ai
 Environment=AWS_REGION=us-east-2
-Environment=BEDROCK_MODEL_ID=amazon.titan-text-express-v1
-ExecStart=/opt/cometbot/ai/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Environment=BEDROCK_MODEL_ID=anthropic.claude-opus-5
+ExecStart=/opt/cometbot/ai/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
@@ -56,7 +78,8 @@ cd /opt/cometbot/server
 mvn -q package -DskipTests
 ```
 
-Create `/etc/systemd/system/cometbot-server.service`:
+Create `/etc/systemd/system/cometbot-server.service` (keep this file readable by root only, since it holds secrets:
+`sudo chmod 600`):
 
 ```ini
 [Unit]
@@ -71,11 +94,14 @@ Environment=DB_PORT=3306
 Environment=DB_NAME=cometbot
 Environment=DB_USER=<db-user>
 Environment=DB_PASSWORD=<db-password>
+Environment=DB_SSL_MODE=REQUIRED
 Environment=AI_URL=http://localhost:8000
+Environment=API_KEY=<long-random-string>
 Environment=DISCORD_TOKEN=<bot-token>
 Environment=DISCORD_OWNER_ID=<your-discord-user-id>
 Environment=REMINDER_TZ=America/Chicago
 ExecStart=/usr/bin/java -jar /opt/cometbot/server/target/cometbot-server-0.1.0.jar
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
@@ -85,24 +111,45 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload && sudo systemctl enable --now cometbot-server
 ```
 
-## 4. Verify
+Generate the API key with e.g. `openssl rand -hex 32`. REST calls must send it as `X-API-Key`.
+
+## 5. Verify
 
 ```bash
 curl localhost:8080/actuator/health   # {"status":"UP"}
 curl localhost:8000/health            # {"status":"up"}
+curl -H "X-API-Key: $API_KEY" localhost:8080/api/guilds/<guild-id>/deadlines
 ```
 
-## Local dev (no AWS)
+In Discord, run `!help`, then `!setsyllabus` with a syllabus PDF attached.
+
+## Updating
 
 ```bash
-cd server && mvn spring-boot:run          # H2 in-memory, REST-only unless DISCORD_TOKEN set
-cd ai && python -m venv .venv             # FastAPI on :8000
-.venv/Scripts/activate && pip install -r requirements.txt && python main.py
+cd /opt/cometbot && git pull
+ai/.venv/bin/pip install -r ai/requirements.txt && sudo systemctl restart cometbot-ai
+(cd server && mvn -q package -DskipTests) && sudo systemctl restart cometbot-server
+```
+
+The schema is managed by Hibernate (`ddl-auto=update`), which adds new columns automatically.
+
+## Local dev (no AWS database)
+
+```bash
+# Server: H2 in-memory DB, REST-only unless DISCORD_TOKEN is set
+cd server && mvn spring-boot:run
+
+# AI service on :8000 (Python 3.10+, needs AWS credentials that can call Bedrock)
+cd ai && python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt && python main.py
 ```
 
 ## Alternative: Docker Compose (prod-like MySQL locally)
 
 ```bash
+cp .env.example .env   # fill in DISCORD_TOKEN, AWS credentials, API_KEY
 docker compose up --build
 ```
-Needs Docker; uses profile `prod` pointed at the compose `mysql` service.
+
+Uses profile `prod` pointed at the compose `mysql` service.

@@ -12,11 +12,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
 import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
+import java.time.temporal.ChronoUnit;
 
 @Service
 public class ReminderService {
@@ -27,21 +26,27 @@ public class ReminderService {
     private final DeadlineRepository deadlineRepository;
     private final SettingsService settingsService;
     private final ObjectProvider<JDA> jdaProvider;
-    private final ZoneId zoneId;
+    private final Clock clock;
     private final int beforeDays;
 
     public ReminderService(DeadlineRepository deadlineRepository,
                            SettingsService settingsService,
                            ObjectProvider<JDA> jdaProvider,
-                           @Value("${reminder.tz:America/Chicago}") String tz,
+                           Clock clock,
                            @Value("${reminder.before-days:3}") int beforeDays) {
         this.deadlineRepository = deadlineRepository;
         this.settingsService = settingsService;
         this.jdaProvider = jdaProvider;
-        this.zoneId = ZoneId.of(tz);
+        this.clock = clock;
         this.beforeDays = beforeDays;
     }
 
+    /**
+     * Sends a "due today" reminder on the due date and an advance reminder once the
+     * deadline is within {@code beforeDays} days. Advance reminders use a window rather
+     * than an exact day, so they still go out if the bot was down on that day or the
+     * deadline was added late.
+     */
     @Scheduled(fixedDelayString = "${reminder.interval-ms:1800000}", initialDelay = 30000)
     public void checkDeadlines() {
         JDA jda = jdaProvider.getIfAvailable();
@@ -49,27 +54,27 @@ public class ReminderService {
             return;
         }
 
-        LocalDate today = LocalDate.now(zoneId);
-        LocalDate inDays = today.plusDays(beforeDays);
+        LocalDate today = LocalDate.now(clock);
 
-        sendBatch(jda, deadlineRepository.findByDueDateAndNotifiedTodayFalse(today), true, today);
-        sendBatch(jda, deadlineRepository.findByDueDateAndNotified3DayFalse(inDays), false, inDays);
-    }
+        for (Deadline d : deadlineRepository.findByDueDateAndNotifiedTodayFalse(today)) {
+            if (send(jda, d, format(d, today))) {
+                // The advance reminder is moot once "due today" has gone out.
+                d.setNotifiedToday(true);
+                d.setNotified3Day(true);
+                deadlineRepository.save(d);
+            }
+        }
 
-    private void sendBatch(JDA jda, List<Deadline> deadlines, boolean dueToday, LocalDate date) {
-        for (Deadline deadline : deadlines) {
-            if (send(jda, deadline, dueToday)) {
-                if (dueToday) {
-                    deadline.setNotifiedToday(true);
-                } else {
-                    deadline.setNotified3Day(true);
-                }
-                deadlineRepository.save(deadline);
+        for (Deadline d : deadlineRepository.findByDueDateBetweenAndNotified3DayFalse(
+                today.plusDays(1), today.plusDays(beforeDays))) {
+            if (send(jda, d, format(d, today))) {
+                d.setNotified3Day(true);
+                deadlineRepository.save(d);
             }
         }
     }
 
-    private boolean send(JDA jda, Deadline deadline, boolean dueToday) {
+    private boolean send(JDA jda, Deadline deadline, String text) {
         try {
             Guild guild = jda.getGuildById(deadline.getGuildId());
             if (guild == null) {
@@ -85,11 +90,12 @@ public class ReminderService {
             }
 
             TextChannel channel = guild.getTextChannelById(channelId);
-            if (channel == null) {
+            if (channel == null || !channel.canTalk()) {
                 return false;
             }
 
-            channel.sendMessage(format(deadline, dueToday)).queue();
+            // Wait for Discord to accept the message so a failed send is retried next run.
+            channel.sendMessage(text).complete();
             return true;
         } catch (Exception e) {
             log.warn("Failed to send reminder for deadline {}: {}", deadline.getId(), e.getMessage());
@@ -97,12 +103,14 @@ public class ReminderService {
         }
     }
 
-    private String format(Deadline deadline, boolean dueToday) {
+    String format(Deadline deadline, LocalDate today) {
         String label = deadline.getTitle() + " (" + deadline.getDeadlineType() + ")";
         String date = deadline.getDueDate().format(DATE_FMT);
-        return dueToday
-                ? "\u26A0\uFE0F **Due today:** `" + label + "` \u2014 " + date
-                : "\uD83D\uDCDA **Reminder:** `" + label + "` is due in " + beforeDays
-                + " days (" + date + ")";
+        long days = ChronoUnit.DAYS.between(today, deadline.getDueDate());
+        if (days <= 0) {
+            return "⚠️ **Due today:** `" + label + "` — " + date;
+        }
+        String when = days == 1 ? "tomorrow" : "in " + days + " days";
+        return "📚 **Reminder:** `" + label + "` is due " + when + " (" + date + ")";
     }
 }

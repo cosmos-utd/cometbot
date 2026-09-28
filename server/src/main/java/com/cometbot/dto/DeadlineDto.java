@@ -11,7 +11,8 @@ public record DeadlineDto(
         String type,
         LocalDate dueDate,
         boolean notified3Day,
-        boolean notifiedToday
+        boolean notifiedToday,
+        boolean manual
 ) {
     public static DeadlineDto from(Deadline d) {
         return new DeadlineDto(
@@ -21,7 +22,8 @@ public record DeadlineDto(
                 d.getDeadlineType(),
                 d.getDueDate(),
                 d.isNotified3Day(),
-                d.isNotifiedToday()
+                d.isNotifiedToday(),
+                d.isManual()
         );
     }
 }

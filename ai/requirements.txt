@@ -1,4 +1,4 @@
+anthropic[bedrock]>=1.9,<2
 fastapi
 uvicorn[standard]
-boto3
-pydantic
+pydantic>=2

@@ -20,6 +20,7 @@
     <properties>
         <java.version>25</java.version>
         <jda.version>5.6.1</jda.version>
+        <pdfbox.version>3.0.5</pdfbox.version>
     </properties>
 
     <dependencies>
@@ -55,6 +56,12 @@
             <groupId>net.dv8tion</groupId>
             <artifactId>JDA</artifactId>
             <version>${jda.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>${pdfbox.version}</version>
         </dependency>
 
         <dependency>

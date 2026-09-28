@@ -20,13 +20,14 @@ services:
       dockerfile: Dockerfile.ai
     environment:
       AWS_REGION: ${AWS_REGION:-us-east-2}
-      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-amazon.titan-text-express-v1}
-      AI_PORT: "8000"
-    ports:
-      - "8000:8000"
-    # Bedrock is called via the EC2 instance role in production.
-    # For local testing, either set AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-    # in the environment or leave empty to fall back to default credential chain.
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-anthropic.claude-opus-5}
+      # Bedrock credentials for local runs (in production the EC2 instance role is used instead).
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    # Not published to the host: only the server talks to it.
+    expose:
+      - "8000"
 
   server:
     build:
@@ -39,10 +40,12 @@ services:
       DB_NAME: cometbot
       DB_USER: root
       DB_PASSWORD: root
+      DB_SSL_MODE: REQUIRED
       AI_URL: http://ai:8000
       DISCORD_TOKEN: ${DISCORD_TOKEN:-}
       DISCORD_OWNER_ID: ${DISCORD_OWNER_ID:-}
-      REMINDER_TZ: America/Chicago
+      REMINDER_TZ: ${REMINDER_TZ:-America/Chicago}
+      API_KEY: ${API_KEY:-}
     ports:
       - "8080:8080"
     depends_on:

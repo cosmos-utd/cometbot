@@ -41,6 +41,10 @@ public class Deadline {
     @Column(name = "notified_today", nullable = false)
     private boolean notifiedToday;
 
+    /** True when added by a person; rescans only replace AI-extracted (non-manual) deadlines. */
+    @Column(name = "manual", nullable = false)
+    private boolean manual;
+
     @Column(name = "created_by", length = 64)
     private String createdBy;
 
@@ -121,6 +125,14 @@ public class Deadline {
 
     public void setNotifiedToday(boolean notifiedToday) {
         this.notifiedToday = notifiedToday;
+    }
+
+    public boolean isManual() {
+        return manual;
+    }
+
+    public void setManual(boolean manual) {
+        this.manual = manual;
     }
 
     public String getCreatedBy() {

@@ -18,9 +18,7 @@ public class JdaConfig {
     private static final Logger log = LoggerFactory.getLogger(JdaConfig.class);
 
     @Bean(destroyMethod = "shutdownNow")
-    public JDA jda(@Value("${discord.token:}") String token,
-                   @Value("${discord.owner-id:}") String ownerId,
-                   BotListener listener) {
+    public JDA jda(@Value("${discord.token:}") String token, BotListener listener) {
         if (token == null || token.isBlank()) {
             log.warn("discord.token is not set - running in REST-only mode (no Discord bot)");
             return null;

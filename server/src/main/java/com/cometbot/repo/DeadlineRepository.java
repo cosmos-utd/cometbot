@@ -11,13 +11,15 @@ public interface DeadlineRepository extends JpaRepository<Deadline, Long> {
 
     List<Deadline> findByGuildIdOrderByDueDateAsc(String guildId);
 
+    List<Deadline> findByGuildIdAndDueDateGreaterThanEqualOrderByDueDateAsc(String guildId, LocalDate from);
+
+    List<Deadline> findByGuildIdAndManualFalse(String guildId);
+
+    List<Deadline> findByGuildIdAndManualTrue(String guildId);
+
     Optional<Deadline> findByIdAndGuildId(Long id, String guildId);
 
-    boolean existsByIdAndGuildId(Long id, String guildId);
-
-    long deleteByGuildId(String guildId);
-
-    List<Deadline> findByDueDateAndNotified3DayFalse(LocalDate dueDate);
-
     List<Deadline> findByDueDateAndNotifiedTodayFalse(LocalDate dueDate);
+
+    List<Deadline> findByDueDateBetweenAndNotified3DayFalse(LocalDate from, LocalDate to);
 }

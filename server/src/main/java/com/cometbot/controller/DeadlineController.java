@@ -30,8 +30,10 @@ public class DeadlineController {
     }
 
     @GetMapping
-    public List<DeadlineDto> list(@PathVariable String guildId) {
-        return deadlineService.list(guildId).stream().map(DeadlineDto::from).toList();
+    public List<DeadlineDto> list(@PathVariable String guildId,
+                                  @RequestParam(defaultValue = "false") boolean upcoming) {
+        List<Deadline> deadlines = upcoming ? deadlineService.listUpcoming(guildId) : deadlineService.list(guildId);
+        return deadlines.stream().map(DeadlineDto::from).toList();
     }
 
     @PostMapping
@@ -40,12 +42,7 @@ public class DeadlineController {
                               @RequestParam(required = false) String actorId,
                               @Valid @RequestBody DeadlineRequest request) {
         Deadline deadline = deadlineService.create(
-                guildId,
-                requireTitle(request.title()),
-                request.type() == null || request.type().isBlank() ? "assignment" : request.type().trim().toLowerCase(),
-                requireDate(request.dueDate()),
-                actorId
-        );
+                guildId, request.title(), request.type(), request.dueDate(), actorId);
         return DeadlineDto.from(deadline);
     }
 
@@ -53,7 +50,7 @@ public class DeadlineController {
     public DeadlineDto update(@PathVariable String guildId,
                               @PathVariable Long id,
                               @RequestParam(required = false) String actorId,
-                              @RequestBody DeadlineRequest request) {
+                              @Valid @RequestBody DeadlineRequest request) {
         return DeadlineDto.from(deadlineService.update(guildId, id, request, actorId));
     }
 
@@ -61,19 +58,5 @@ public class DeadlineController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable String guildId, @PathVariable Long id) {
         deadlineService.delete(guildId, id);
-    }
-
-    private String requireTitle(String title) {
-        if (title == null || title.isBlank()) {
-            throw new IllegalArgumentException("title is required");
-        }
-        return title.trim();
-    }
-
-    private java.time.LocalDate requireDate(java.time.LocalDate date) {
-        if (date == null) {
-            throw new IllegalArgumentException("dueDate is required");
-        }
-        return date;
     }
 }
